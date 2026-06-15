@@ -1,259 +1,246 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 
-interface Commitment {
-  who: string;
-  what: string;
-  status: string;
+interface Message {
+  role: "user" | "assistant";
+  content: string;
 }
 
-interface RelationshipBrief {
-  contactName: string;
-  relationshipSummary: string;
-  keyTopics: string[];
-  commitments: Commitment[];
-  followUps: string[];
-  recommendedNextAction: string;
-  draftResponse: string;
-  relationshipHealth: string;
-  lastContactEstimate: string;
-}
-
-const healthColors: Record<string, { bg: string; text: string; label: string }> = {
-  strong: { bg: "#0D2B1F", text: "#34D399", label: "Strong" },
-  good: { bg: "#0D1F2B", text: "#60A5FA", label: "Good" },
-  "needs-attention": { bg: "#2B1F0D", text: "#FBBF24", label: "Needs Attention" },
-  "at-risk": { bg: "#2B0D0D", text: "#F87171", label: "At Risk" },
-};
+const SUGGESTIONS = [
+  "Who emails me most frequently?",
+  "Find emails about contracts or deadlines",
+  "What projects was I working on this year?",
+  "Summarize unresolved threads needing follow-up",
+  "Any emails I haven't replied to from important people?",
+];
 
 export default function Home() {
-  const [contact, setContact] = useState("");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [brief, setBrief] = useState<RelationshipBrief | null>(null);
-  const [error, setError] = useState("");
-  const [showDraft, setShowDraft] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  async function analyze(name?: string) {
-    const query = name || contact.trim();
-    if (!query || loading) return;
-    setContact(query);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  async function send(query?: string) {
+    const text = query || input.trim();
+    if (!text || loading) return;
+
+    const userMsg: Message = { role: "user", content: text };
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
+    setInput("");
     setLoading(true);
-    setBrief(null);
-    setError("");
-    setShowDraft(false);
+
+    setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contact: query }),
+        body: JSON.stringify({ messages: newMessages }),
       });
 
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
-      let raw = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        raw += decoder.decode(value);
+        const chunk = decoder.decode(value);
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            role: "assistant",
+            content: updated[updated.length - 1].content + chunk,
+          };
+          return updated;
+        });
       }
-
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(clean);
-      setBrief(parsed);
-    } catch (err) {
-      setError("Could not analyze this contact. Make sure emails are loaded and try again.");
+    } catch {
+      setMessages((prev) => {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          role: "assistant",
+          content: "Something went wrong. Please try again.",
+        };
+        return updated;
+      });
     } finally {
       setLoading(false);
+      setTimeout(() => inputRef.current?.focus(), 100);
     }
   }
 
-  function copyDraft() {
-    if (brief?.draftResponse) {
-      navigator.clipboard.writeText(brief.draftResponse);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  }
-
-  const health = brief ? healthColors[brief.relationshipHealth] || healthColors.good : null;
+  const isEmpty = messages.length === 0;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#080810", color: "#E0E0F0", fontFamily: "'Inter', -apple-system, sans-serif" }}>
-      <header style={{ padding: "20px 32px", borderBottom: "1px solid #151525", display: "flex", alignItems: "center", gap: "12px" }}>
-        <div style={{ width: "34px", height: "34px", background: "linear-gradient(135deg, #6366F1, #8B5CF6)", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <span style={{ fontSize: "16px" }}>⚡</span>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "#0A0A0F", color: "#E8E8F0", fontFamily: "'Inter', -apple-system, sans-serif" }}>
+
+      {/* Header */}
+      <header style={{ padding: "20px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #1A1A2E" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div style={{ width: "32px", height: "32px", background: "linear-gradient(135deg, #6366F1, #8B5CF6)", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
+              <polyline points="22,6 12,13 2,6"/>
+            </svg>
+          </div>
+          <span style={{ fontWeight: 600, fontSize: "15px", letterSpacing: "-0.3px" }}>Inbox Intelligence</span>
         </div>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: "15px", letterSpacing: "-0.3px" }}>Relationship Agent</div>
-          <div style={{ fontSize: "11px", color: "#555570" }}>Powered by your email history</div>
-        </div>
-        {brief && (
-          <button onClick={() => { setBrief(null); setContact(""); }} style={{ marginLeft: "auto", fontSize: "12px", color: "#555570", background: "none", border: "1px solid #1E1E2E", borderRadius: "6px", padding: "6px 12px", cursor: "pointer" }}>
-            ← New Contact
+        {!isEmpty && (
+          <button
+            onClick={() => setMessages([])}
+            style={{ fontSize: "13px", color: "#555570", background: "none", border: "none", cursor: "pointer", padding: "6px 12px", borderRadius: "6px", transition: "color 0.2s" }}
+            onMouseEnter={e => (e.currentTarget.style.color = "#8888AA")}
+            onMouseLeave={e => (e.currentTarget.style.color = "#555570")}
+          >
+            New search
           </button>
         )}
       </header>
 
-      <div style={{ maxWidth: "800px", margin: "0 auto", padding: "40px 24px" }}>
-        {!brief && !loading && (
-          <>
-            <div style={{ marginBottom: "40px" }}>
-              <div style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: "#6366F1", marginBottom: "12px" }}>Relationship Intelligence</div>
-              <h1 style={{ fontSize: "32px", fontWeight: 700, lineHeight: 1.2, letterSpacing: "-1px", marginBottom: "12px" }}>
-                Who do you need to<br /><span style={{ color: "#6366F1" }}>catch up with?</span>
+      {/* Body */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "0 24px" }}>
+        {isEmpty ? (
+          <div style={{ maxWidth: "640px", margin: "0 auto", paddingTop: "80px", paddingBottom: "40px" }}>
+            {/* Hero */}
+            <div style={{ marginBottom: "48px" }}>
+              <div style={{ display: "inline-block", fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: "#6366F1", marginBottom: "16px", padding: "4px 10px", background: "#6366F120", borderRadius: "4px" }}>
+                AI-Powered
+              </div>
+              <h1 style={{ fontSize: "36px", fontWeight: 700, lineHeight: 1.15, letterSpacing: "-1px", marginBottom: "12px", color: "#F0F0F8" }}>
+                Your entire email history,<br />
+                <span style={{ color: "#6366F1" }}>instantly searchable.</span>
               </h1>
-              <p style={{ fontSize: "14px", color: "#888899", lineHeight: 1.6 }}>
-                Enter a contact name and the agent will analyze your full communication history — surfacing key topics, commitments, follow-ups, and a ready-to-send response.
+              <p style={{ fontSize: "15px", color: "#888899", lineHeight: 1.6 }}>
+                Ask anything — find people, projects, threads, and decisions buried in years of email.
               </p>
             </div>
-            <div style={{ display: "flex", gap: "10px", marginBottom: "32px" }}>
-              <input
-                value={contact}
-                onChange={e => setContact(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && analyze()}
-                placeholder="Enter a contact name (e.g. John Smith)"
-                style={{ flex: 1, padding: "14px 18px", background: "#0F0F1A", border: "1px solid #1E1E2E", borderRadius: "12px", fontSize: "14px", color: "#E0E0F0", outline: "none" }}
-                onFocus={e => e.currentTarget.style.borderColor = "#6366F1"}
-                onBlur={e => e.currentTarget.style.borderColor = "#1E1E2E"}
-                autoFocus
-              />
-              <button onClick={() => analyze()} disabled={!contact.trim()} style={{ padding: "14px 24px", background: contact.trim() ? "#6366F1" : "#1E1E2E", border: "none", borderRadius: "12px", color: contact.trim() ? "white" : "#444455", fontSize: "14px", fontWeight: 600, cursor: contact.trim() ? "pointer" : "not-allowed" }}>
-                Analyze →
-              </button>
-            </div>
-            <div style={{ marginBottom: "32px" }}>
-              <div style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: "#444455", marginBottom: "14px" }}>What the agent delivers</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                {[
-                  { icon: "📋", title: "Relationship Summary", desc: "Full context of your history with this person" },
-                  { icon: "✅", title: "Commitments & Follow-ups", desc: "What was promised, by whom, and status" },
-                  { icon: "🎯", title: "Recommended Next Action", desc: "One clear thing to do right now" },
-                  { icon: "✉️", title: "Draft Response", desc: "Ready-to-send email addressing open items" },
-                ].map(item => (
-                  <div key={item.title} style={{ padding: "16px", background: "#0F0F1A", border: "1px solid #151525", borderRadius: "10px" }}>
-                    <div style={{ fontSize: "20px", marginBottom: "8px" }}>{item.icon}</div>
-                    <div style={{ fontSize: "13px", fontWeight: 600, color: "#C0C0E0", marginBottom: "4px" }}>{item.title}</div>
-                    <div style={{ fontSize: "12px", color: "#666677" }}>{item.desc}</div>
-                  </div>
+
+            {/* Suggestions */}
+            <div style={{ marginBottom: "16px" }}>
+              <p style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: "#444455", marginBottom: "12px" }}>
+                Try asking
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => send(s)}
+                    style={{
+                      textAlign: "left", padding: "14px 16px", background: "#111118", border: "1px solid #1E1E2E",
+                      borderRadius: "10px", color: "#9999BB", fontSize: "14px", cursor: "pointer", transition: "all 0.15s",
+                      display: "flex", alignItems: "center", justifyContent: "space-between"
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = "#6366F1"; e.currentTarget.style.color = "#E0E0F0"; e.currentTarget.style.background = "#14141E"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = "#1E1E2E"; e.currentTarget.style.color = "#9999BB"; e.currentTarget.style.background = "#111118"; }}
+                  >
+                    <span>{s}</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4, flexShrink: 0, marginLeft: "12px" }}>
+                      <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                    </svg>
+                  </button>
                 ))}
               </div>
             </div>
-          </>
-        )}
-
-        {loading && (
-          <div style={{ textAlign: "center", padding: "80px 0" }}>
-            <div style={{ fontSize: "32px", marginBottom: "16px" }}>⚡</div>
-            <div style={{ fontSize: "16px", fontWeight: 600, color: "#C0C0E0", marginBottom: "8px" }}>Analyzing relationship with {contact}...</div>
-            <div style={{ fontSize: "13px", color: "#555570" }}>Searching email history, identifying patterns, generating brief</div>
           </div>
-        )}
-
-        {error && (
-          <div style={{ padding: "16px", background: "#2B0D0D", border: "1px solid #4B1A1A", borderRadius: "10px", color: "#F87171", fontSize: "14px" }}>{error}</div>
-        )}
-
-        {brief && health && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <div style={{ padding: "24px", background: "#0F0F1A", border: "1px solid #1E1E2E", borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div>
-                <div style={{ fontSize: "11px", color: "#555570", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "1px" }}>Relationship Brief</div>
-                <div style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-0.5px" }}>{brief.contactName}</div>
-                <div style={{ fontSize: "12px", color: "#666677", marginTop: "4px" }}>Last contact: {brief.lastContactEstimate}</div>
-              </div>
-              <div style={{ padding: "8px 16px", background: health.bg, borderRadius: "20px", border: `1px solid ${health.text}30` }}>
-                <div style={{ fontSize: "12px", fontWeight: 600, color: health.text }}>● {health.label}</div>
-              </div>
-            </div>
-
-            <div style={{ padding: "20px", background: "#0F0F1A", border: "1px solid #1E1E2E", borderRadius: "14px" }}>
-              <div style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: "#6366F1", marginBottom: "10px" }}>Relationship Summary</div>
-              <div style={{ fontSize: "14px", color: "#C0C0E0", lineHeight: 1.7 }}>{brief.relationshipSummary}</div>
-              {brief.keyTopics.length > 0 && (
-                <div style={{ marginTop: "14px", display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                  {brief.keyTopics.map(topic => (
-                    <span key={topic} style={{ padding: "4px 10px", background: "#1A1A2E", border: "1px solid #2A2A3E", borderRadius: "20px", fontSize: "12px", color: "#9999BB" }}>{topic}</span>
-                  ))}
+        ) : (
+          <div style={{ maxWidth: "700px", margin: "0 auto", paddingTop: "32px", paddingBottom: "24px", display: "flex", flexDirection: "column", gap: "24px" }}>
+            {messages.map((msg, i) => (
+              <div key={i} style={{ display: "flex", flexDirection: msg.role === "user" ? "row-reverse" : "row", gap: "12px", alignItems: "flex-start" }}>
+                {/* Avatar */}
+                <div style={{
+                  width: "30px", height: "30px", borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 600,
+                  background: msg.role === "user" ? "#6366F1" : "#1E1E2E",
+                  color: msg.role === "user" ? "white" : "#6366F1",
+                  border: msg.role === "assistant" ? "1px solid #2A2A3E" : "none"
+                }}>
+                  {msg.role === "user" ? "S" : "✦"}
                 </div>
-              )}
-            </div>
-
-            {brief.commitments.length > 0 && (
-              <div style={{ padding: "20px", background: "#0F0F1A", border: "1px solid #1E1E2E", borderRadius: "14px" }}>
-                <div style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: "#6366F1", marginBottom: "12px" }}>Commitments</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  {brief.commitments.map((c, i) => {
-                    const statusColor = c.status === "done" ? "#34D399" : c.status === "pending" ? "#FBBF24" : "#9999BB";
-                    return (
-                      <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: "12px", padding: "10px 12px", background: "#0A0A14", borderRadius: "8px" }}>
-                        <span style={{ fontSize: "11px", padding: "2px 8px", background: `${statusColor}20`, color: statusColor, borderRadius: "10px", whiteSpace: "nowrap", marginTop: "1px" }}>{c.status}</span>
-                        <span style={{ fontSize: "13px", color: "#C0C0E0" }}><strong style={{ color: "#E0E0F0" }}>{c.who}:</strong> {c.what}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {brief.followUps.length > 0 && (
-              <div style={{ padding: "20px", background: "#0F0F1A", border: "1px solid #1E1E2E", borderRadius: "14px" }}>
-                <div style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: "#6366F1", marginBottom: "12px" }}>Follow-ups Needed</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  {brief.followUps.map((f, i) => (
-                    <div key={i} style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
-                      <span style={{ color: "#6366F1", fontSize: "14px", marginTop: "1px" }}>→</span>
-                      <span style={{ fontSize: "13px", color: "#C0C0E0", lineHeight: 1.5 }}>{f}</span>
+                {/* Bubble */}
+                <div style={{
+                  maxWidth: "calc(100% - 50px)",
+                  padding: msg.role === "user" ? "10px 16px" : "0",
+                  background: msg.role === "user" ? "#6366F1" : "transparent",
+                  borderRadius: msg.role === "user" ? "18px 4px 18px 18px" : "0",
+                  fontSize: "14px",
+                  lineHeight: 1.65,
+                  color: msg.role === "user" ? "white" : "#C8C8E0",
+                }}>
+                  {msg.role === "assistant" ? (
+                    <div className="prose prose-invert prose-sm" style={{ maxWidth: "none" }}>
+                      <ReactMarkdown>{msg.content || (loading && i === messages.length - 1 ? "▋" : "")}</ReactMarkdown>
                     </div>
-                  ))}
+                  ) : msg.content}
                 </div>
               </div>
-            )}
-
-            <div style={{ padding: "20px", background: "#0D0D2B", border: "1px solid #6366F130", borderRadius: "14px" }}>
-              <div style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: "#6366F1", marginBottom: "10px" }}>🎯 Recommended Next Action</div>
-              <div style={{ fontSize: "15px", fontWeight: 600, color: "#E0E0F0", lineHeight: 1.5 }}>{brief.recommendedNextAction}</div>
-            </div>
-
-            <div style={{ padding: "20px", background: "#0F0F1A", border: "1px solid #1E1E2E", borderRadius: "14px" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
-                <div style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: "#6366F1" }}>✉️ Draft Response</div>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <button onClick={() => setShowDraft(!showDraft)} style={{ fontSize: "12px", padding: "5px 12px", background: "#1A1A2E", border: "1px solid #2A2A3E", borderRadius: "6px", color: "#9999BB", cursor: "pointer" }}>
-                    {showDraft ? "Hide" : "Show draft"}
-                  </button>
-                  {showDraft && (
-                    <button onClick={copyDraft} style={{ fontSize: "12px", padding: "5px 12px", background: copied ? "#0D2B1F" : "#6366F1", border: "none", borderRadius: "6px", color: copied ? "#34D399" : "white", cursor: "pointer" }}>
-                      {copied ? "✓ Copied" : "Copy"}
-                    </button>
-                  )}
-                </div>
-              </div>
-              {showDraft && (
-                <div style={{ padding: "16px", background: "#0A0A14", borderRadius: "8px", fontSize: "13px", color: "#C0C0E0", lineHeight: 1.7, whiteSpace: "pre-wrap", fontFamily: "monospace" }}>
-                  {brief.draftResponse}
-                </div>
-              )}
-              {!showDraft && (
-                <div style={{ fontSize: "13px", color: "#555570" }}>A ready-to-send email has been drafted addressing the most important outstanding item.</div>
-              )}
-            </div>
-
-            <div style={{ display: "flex", gap: "10px" }}>
-              <button onClick={() => { setBrief(null); setContact(""); }} style={{ flex: 1, padding: "13px", background: "#0F0F1A", border: "1px solid #1E1E2E", borderRadius: "10px", color: "#9999BB", fontSize: "14px", cursor: "pointer" }}>
-                ← Analyze Another Contact
-              </button>
-              <button onClick={copyDraft} style={{ flex: 1, padding: "13px", background: "#6366F1", border: "none", borderRadius: "10px", color: "white", fontSize: "14px", fontWeight: 600, cursor: "pointer" }}>
-                {copied ? "✓ Draft Copied!" : "Copy Draft Response"}
-              </button>
-            </div>
+            ))}
+            <div ref={bottomRef} />
           </div>
         )}
       </div>
-      <style>{`* { box-sizing: border-box; margin: 0; padding: 0; } ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #2A2A3E; border-radius: 2px; }`}</style>
+
+      {/* Input */}
+      <div style={{ padding: "16px 24px 24px", borderTop: "1px solid #1A1A2E" }}>
+        <div style={{ maxWidth: "700px", margin: "0 auto", display: "flex", gap: "10px", alignItems: "flex-end" }}>
+          <div style={{ flex: 1, position: "relative" }}>
+            <input
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
+              disabled={loading}
+              placeholder="Ask about your emails..."
+              style={{
+                width: "100%", padding: "14px 18px", background: "#111118", border: "1px solid #1E1E2E",
+                borderRadius: "12px", fontSize: "14px", color: "#E0E0F0", outline: "none",
+                transition: "border-color 0.15s", boxSizing: "border-box"
+              }}
+              onFocus={e => (e.currentTarget.style.borderColor = "#6366F1")}
+              onBlur={e => (e.currentTarget.style.borderColor = "#1E1E2E")}
+            />
+          </div>
+          <button
+            onClick={() => send()}
+            disabled={loading || !input.trim()}
+            style={{
+              padding: "14px 20px", background: loading || !input.trim() ? "#1E1E2E" : "#6366F1",
+              border: "none", borderRadius: "12px", color: loading || !input.trim() ? "#444455" : "white",
+              fontSize: "14px", fontWeight: 600, cursor: loading || !input.trim() ? "not-allowed" : "pointer",
+              transition: "all 0.15s", whiteSpace: "nowrap"
+            }}
+          >
+            {loading ? (
+              <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "currentColor", animation: "pulse 1s infinite" }} />
+                Searching
+              </span>
+            ) : "Search →"}
+          </button>
+        </div>
+        <p style={{ textAlign: "center", fontSize: "11px", color: "#333344", marginTop: "10px" }}>
+          Searching across your Gmail archive · Powered by Claude
+        </p>
+      </div>
+
+      <style>{`
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #2A2A3E; border-radius: 2px; }
+        .prose p { margin-bottom: 10px; }
+        .prose ul { margin: 8px 0 8px 20px; }
+        .prose li { margin-bottom: 4px; }
+        .prose strong { color: #E0E0F0; }
+        .prose code { background: #1E1E2E; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+      `}</style>
     </div>
   );
 }
