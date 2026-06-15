@@ -15,6 +15,7 @@ const supabase = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY);
 const BATCH_SIZE = 20;
 const MAX_CHUNK_CHARS = 1500;
 const MIN_BODY_LENGTH = 50;
+const MAX_EMAILS = 1000;
 
 async function main() {
   const mboxPath = process.argv[2];
@@ -108,7 +109,9 @@ async function parseMboxStreaming(filePath) {
     }
   }
 
-  return emails;
+  const limited = emails.slice(-MAX_EMAILS);
+  console.log(`   Using most recent ${limited.length} emails`);
+  return limited;
 }
 
 function cleanEmailBody(raw) {
