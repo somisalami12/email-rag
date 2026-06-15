@@ -6,48 +6,53 @@ export const runtime = "nodejs";
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export async function POST(req: Request) {
-  const { messages } = await req.json();
-  const userQuery = messages[messages.length - 1].content;
+  const { contact, mode } = await req.json();
 
-  // 1. Retrieve relevant email chunks from Supabase
   let context = "";
   try {
-    const chunks = await retrieveRelevantEmails(userQuery, 8);
+    // Search for emails related to this contact
+    const chunks = await retrieveRelevantEmails(`emails from or about ${contact}`, 12);
     context = formatChunksAsContext(chunks);
   } catch (err) {
     console.error("Retrieval failed:", err);
-    context = "(Could not retrieve email context — check your Supabase connection)";
+    context = "(Could not retrieve email context)";
   }
 
-  // 2. Build system prompt with retrieved context
-  const systemPrompt = `You are a personal email assistant with access to the user's full email history.
-Answer questions based on the relevant emails provided below. Be specific — cite senders, dates, and subjects when relevant.
-If the answer isn't in the provided emails, say so clearly rather than guessing.
+  const systemPrompt = `You are a relationship management agent that analyzes email history to help users manage their professional relationships.
+
+You will be given a contact name and relevant emails. Your job is to produce a structured relationship brief.
 
 Today's date: ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
 
-RELEVANT EMAILS FROM YOUR HISTORY:
-${context}`;
+RELEVANT EMAILS:
+${context}
 
-  // 3. Stream Claude's response
+Respond ONLY in this exact JSON format, no other text:
+{
+  "contactName": "string",
+  "relationshipSummary": "2-3 sentence overview of the relationship and communication history",
+  "keyTopics": ["topic1", "topic2", "topic3"],
+  "commitments": [
+    {"who": "you or contact name", "what": "what was committed to", "status": "pending/done/unclear"}
+  ],
+  "followUps": ["specific follow-up item 1", "specific follow-up item 2"],
+  "recommendedNextAction": "One clear specific action to take right now",
+  "draftResponse": "A ready-to-send email draft addressing the most important outstanding item. Include subject line as first line starting with Subject:",
+  "relationshipHealth": "strong/good/needs-attention/at-risk",
+  "lastContactEstimate": "approximately when last email exchange was"
+}`;
+
   const stream = await anthropic.messages.stream({
     model: "claude-sonnet-4-6",
-    max_tokens: 1024,
+    max_tokens: 2048,
     system: systemPrompt,
-    messages: messages.map((m: { role: string; content: string }) => ({
-      role: m.role,
-      content: m.content,
-    })),
+    messages: [{ role: "user", content: `Analyze my relationship with: ${contact}` }],
   });
 
-  // 4. Return as a readable stream to the frontend
   const readable = new ReadableStream({
     async start(controller) {
       for await (const chunk of stream) {
-        if (
-          chunk.type === "content_block_delta" &&
-          chunk.delta.type === "text_delta"
-        ) {
+        if (chunk.type === "content_block_delta" && chunk.delta.type === "text_delta") {
           controller.enqueue(new TextEncoder().encode(chunk.delta.text));
         }
       }
