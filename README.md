@@ -1,44 +1,52 @@
-# Email RAG — Setup & Deployment Guide
+Now copy everything below and paste it into TextEdit, then hit Cmd+S to save:
 
-Chat with your entire Gmail history using Claude + pgvector. Built with Next.js, deployed to Vercel.
+Relationship Agent
+An AI-powered email relationship management agent. Type any contact's name and the agent analyzes your full email history with that person — surfacing relationship context, commitments, follow-ups, a ready-to-send draft response, and suggested meeting times.
+Live App: https://email-rag-smoky.vercel.app
 
----
+What It Does
+Instead of spending 20-30 minutes manually reviewing emails before a meeting or follow-up, you type a contact's name and within seconds receive:
 
-## Architecture
+Relationship Summary — full context of your communication history
+Key Topics — what you have discussed
+Commitments — who owes what, and status (pending/done/unclear)
+Follow-ups — specific items that need attention
+Recommended Next Action — one clear thing to do right now
+Draft Response — a ready-to-send email with one-click copy
+Meeting Suggestion — proposed format, agenda, and available time slots
+Relationship Health — at-a-glance status (Strong / Good / Needs Attention / At Risk)
 
-```
-Google Takeout (.mbox)
-       │
-       ▼ (run once)
-Ingestion Script
-├── Parse emails
-├── Embed with OpenAI text-embedding-3-small
-└── Store in Supabase (pgvector)
-       │
-       ▼ (on every query)
-Next.js App (Vercel)
-├── Embed user query
-├── Vector search → top 8 relevant emails
-├── Send emails as context to Claude
-└── Stream answer back to user
-```
 
----
+Demo
 
-## Step 1 — Supabase Setup
+Open https://email-rag-smoky.vercel.app
+Type any contact's name in the search box
+Click Analyze
+The agent returns a full relationship brief in seconds
 
-1. Create a free project at [supabase.com](https://supabase.com)
-2. Go to **SQL Editor** and run this:
 
-```sql
--- Enable the pgvector extension
+How to Set This Up Yourself
+Prerequisites
+
+Node.js installed (download at nodejs.org — click the LTS button)
+Free accounts on: Supabase, Vercel, Anthropic Console, OpenAI Platform
+
+Step 1 — Get the Code
+git clone https://github.com/somisalami12/email-rag.git
+cd email-rag
+npm install
+Step 2 — Set Up Supabase
+
+Go to supabase.com and create a free account
+Create a new project
+Go to SQL Editor and run this:
+
 create extension if not exists vector;
 
--- Create the email chunks table
-create table email_chunks (
+create table if not exists email_chunks (
   id           bigserial primary key,
   content      text not null,
-  embedding    vector(1536),       -- matches text-embedding-3-small dimensions
+  embedding    vector(1536),
   metadata     jsonb,
   message_id   text,
   chunk_index  int default 0,
@@ -46,7 +54,6 @@ create table email_chunks (
   unique (message_id, chunk_index)
 );
 
--- Create the similarity search function
 create or replace function match_email_chunks(
   query_embedding vector(1536),
   match_threshold float default 0.3,
@@ -60,10 +67,7 @@ returns table (
 )
 language sql stable
 as $$
-  select
-    id,
-    content,
-    metadata,
+  select id, content, metadata,
     1 - (embedding <=> query_embedding) as similarity
   from email_chunks
   where 1 - (embedding <=> query_embedding) > match_threshold
@@ -71,96 +75,55 @@ as $$
   limit match_count;
 $$;
 
--- Index for fast similarity search
-create index on email_chunks
+create index if not exists email_chunks_embedding_idx on email_chunks
   using ivfflat (embedding vector_cosine_ops)
   with (lists = 100);
-```
 
-3. Go to **Project Settings → API** and copy:
-   - Project URL → `NEXT_PUBLIC_SUPABASE_URL`
-   - `service_role` key → `SUPABASE_SERVICE_ROLE_KEY`
+Go to Settings → API Keys → Legacy and copy your Project URL and service_role key
 
----
+Step 3 — Get API Keys
 
-## Step 2 — Get API Keys
+Anthropic: console.anthropic.com → API Keys → Create Key
+OpenAI: platform.openai.com → API Keys → Create new secret key (add $5 credit)
 
-- **Anthropic:** [console.anthropic.com](https://console.anthropic.com) → API Keys
-- **OpenAI:** [platform.openai.com](https://platform.openai.com) → API Keys (embeddings only, very cheap)
+Step 4 — Configure Environment
+Rename .env.local.example to .env.local and fill in:
+ANTHROPIC_API_KEY=your-key
+OPENAI_API_KEY=your-key
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-key
+Step 5 — Export Your Gmail
 
-Copy `.env.local.example` to `.env.local` and fill in all four values.
+Go to takeout.google.com
+Deselect all, then select only Mail
+Download the export when Google emails you the link
+Unzip and find the .mbox file
 
----
-
-## Step 3 — Export Your Gmail
-
-1. Go to [Google Takeout](https://takeout.google.com)
-2. Deselect everything, then select only **Mail**
-3. Choose **.mbox format**
-4. Download and unzip — you'll get a file like `All mail Including Spam and Trash.mbox`
-
----
-
-## Step 4 — Run Ingestion (Once)
-
-```bash
-npm install
-node scripts/ingest.mjs "path/to/All mail Including Spam and Trash.mbox"
-```
-
-This will take a few minutes depending on your email volume. Progress prints to the terminal.
-Cost estimate: ~$0.02 per 10,000 emails for embeddings.
-
----
-
-## Step 5 — Run Locally
-
-```bash
+Step 6 — Load Your Emails
+node --max-old-space-size=8192 scripts/ingest.mjs "/path/to/your/mail.mbox"
+Wait for: Ingestion complete!
+Step 7 — Run Locally
 npm run dev
-# Open http://localhost:3000
-```
+Open http://localhost:3000
+Step 8 — Deploy to Vercel
 
----
+Go to vercel.com and sign up with GitHub
+Import your email-rag repository
+Add your 4 environment variables
+Click Deploy
 
-## Step 6 — Deploy to Vercel
 
-```bash
-# Install Vercel CLI
-npm i -g vercel
+Cost
 
-# Deploy
-vercel
+Supabase: Free
+Vercel: Free
+Anthropic Claude: ~$0.003 per query
+OpenAI embeddings: ~$1-3 one-time setup cost
 
-# Add environment variables
-vercel env add ANTHROPIC_API_KEY
-vercel env add OPENAI_API_KEY
-vercel env add NEXT_PUBLIC_SUPABASE_URL
-vercel env add SUPABASE_SERVICE_ROLE_KEY
 
-# Redeploy with env vars
-vercel --prod
-```
+Troubleshooting
+"Could not analyze this contact" — Make sure emails are loaded and your .env.local keys are correct
+"No space left on device" — Run TRUNCATE email_chunks; in Supabase SQL Editor then re-run ingestion
+Out of memory during ingestion — Add --max-old-space-size=8192 to the node command
 
-Or connect your GitHub repo in the Vercel dashboard and it auto-deploys on push.
-
----
-
-## What You Can Ask
-
-- *"What did Sarah say about the budget in March?"*
-- *"Find all emails where someone mentioned a deadline"*
-- *"Summarize my conversations with the Bengal Group team"*
-- *"Who have I not replied to in the last 6 months?"*
-- *"What projects was I managing in Q1?"*
-
----
-
-## Cost Estimate
-
-| Service | Cost |
-|---|---|
-| Supabase (free tier) | $0/month (up to 500MB) |
-| Vercel (hobby) | $0/month |
-| OpenAI embeddings (ingestion, one-time) | ~$0.02 per 10k emails |
-| Anthropic Claude (per query) | ~$0.003 per question |
-| **Running total** | **~$0–3/month** |
+Tell me when you've saved it, then run the git commands to push.
